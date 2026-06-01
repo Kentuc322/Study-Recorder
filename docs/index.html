@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Study Recorder Dashboard</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Dashboard navigation">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">S</div>
+          <div>
+            <h1>Study Recorder</h1>
+            <p>Dashboard</p>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="Views">
+          <button class="nav-item active" data-view="overview" type="button">Overview</button>
+          <button class="nav-item" data-view="records" type="button">Records</button>
+          <button class="nav-item" data-view="settings" type="button">Settings</button>
+        </nav>
+
+        <div class="data-source">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="data-source-label">Browser storage</span>
+        </div>
+      </aside>
+
+      <main class="main-panel">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="today-label">Today</p>
+            <h2>Study Dashboard</h2>
+          </div>
+          <div class="topbar-actions">
+            <button class="icon-button" id="export-button" type="button" title="Export JSON" aria-label="Export JSON">
+              ↓
+            </button>
+            <label class="icon-button file-button" title="Import JSON" aria-label="Import JSON">
+              ↑
+              <input id="import-input" type="file" accept="application/json,.json" />
+            </label>
+          </div>
+        </header>
+
+        <section class="view active" data-view-panel="overview">
+          <section class="record-panel" aria-labelledby="record-title">
+            <div>
+              <p class="eyebrow">Quick record</p>
+              <h3 id="record-title">勉強時間を記録</h3>
+            </div>
+            <form class="record-form" id="record-form">
+              <label>
+                <span>名前</span>
+                <input id="user-input" name="user" type="text" autocomplete="name" placeholder="Ken" />
+              </label>
+              <label>
+                <span>分数</span>
+                <input id="minutes-input" name="minutes" type="number" min="1" max="1440" required placeholder="25" />
+              </label>
+              <label>
+                <span>日付</span>
+                <input id="date-input" name="date" type="date" required />
+              </label>
+              <button class="primary-button" type="submit">＋ 記録</button>
+            </form>
+          </section>
+
+          <section class="stats-grid" aria-label="Summary">
+            <article class="metric">
+              <span>今日</span>
+              <strong id="today-total">0分</strong>
+              <small id="today-progress">目標 120分</small>
+            </article>
+            <article class="metric">
+              <span>直近7日</span>
+              <strong id="week-total">0分</strong>
+              <small id="week-average">平均 0分</small>
+            </article>
+            <article class="metric">
+              <span>連続記録</span>
+              <strong id="streak-days">0日</strong>
+              <small>今日から逆算</small>
+            </article>
+            <article class="metric">
+              <span>総記録</span>
+              <strong id="entry-count">0件</strong>
+              <small id="all-time-total">合計 0分</small>
+            </article>
+          </section>
+
+          <section class="dashboard-grid">
+            <article class="panel wide">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Trend</p>
+                  <h3>直近14日の推移</h3>
+                </div>
+                <select id="chart-range" aria-label="Chart range">
+                  <option value="14">14日</option>
+                  <option value="30">30日</option>
+                </select>
+              </div>
+              <canvas id="trend-chart" width="960" height="320" aria-label="Study trend chart"></canvas>
+            </article>
+
+            <article class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Goal</p>
+                  <h3>今日の達成率</h3>
+                </div>
+              </div>
+              <div class="goal-ring" id="goal-ring" role="img" aria-label="Goal progress">
+                <span id="goal-percent">0%</span>
+              </div>
+              <p class="goal-copy" id="goal-copy">目標まで 120分</p>
+            </article>
+
+            <article class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Ranking</p>
+                  <h3>ユーザー別合計</h3>
+                </div>
+              </div>
+              <ol class="ranking-list" id="ranking-list"></ol>
+            </article>
+          </section>
+        </section>
+
+        <section class="view" data-view-panel="records">
+          <section class="panel full">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Log</p>
+                <h3>勉強記録</h3>
+              </div>
+              <button class="danger-button" id="clear-button" type="button">全削除</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>日付</th>
+                    <th>名前</th>
+                    <th>分数</th>
+                    <th>登録元</th>
+                  </tr>
+                </thead>
+                <tbody id="records-table"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" data-view-panel="settings">
+          <section class="panel full settings-panel">
+            <div>
+              <p class="eyebrow">Settings</p>
+              <h3>ダッシュボード設定</h3>
+            </div>
+            <label class="setting-row">
+              <span>毎日の目標分数</span>
+              <input id="goal-input" type="number" min="1" max="1440" />
+            </label>
+            <div class="notes">
+              <h4>GitHub Pages での保存について</h4>
+              <p>
+                現在のダッシュボードはブラウザ内に保存します。Discord Bot と同じデータを共有する場合は、
+                Supabase、Firebase、Cloudflare、Google Apps Script などの無料バックエンドに接続してください。
+              </p>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <template id="empty-row-template">
+      <tr>
+        <td colspan="4" class="empty-state">記録はまだありません。</td>
+      </tr>
+    </template>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
