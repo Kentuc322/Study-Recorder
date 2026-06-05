@@ -36,10 +36,72 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
   min-height: 100vh;
+}
+
+.auth-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-screen[hidden],
+.app-shell[hidden] {
+  display: none;
+}
+
+.auth-panel {
+  display: grid;
+  gap: 18px;
+  width: min(460px, 100%);
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.auth-brand {
+  color: var(--text);
+}
+
+.auth-brand p {
+  color: var(--muted);
+}
+
+.auth-panel h2,
+.auth-panel p {
+  margin: 0;
+}
+
+.auth-panel h2 {
+  font-size: 28px;
+}
+
+.auth-panel p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.auth-button {
+  width: 100%;
+}
+
+.setup-warning {
+  padding: 12px;
+  border: 1px solid #e5c879;
+  border-radius: 8px;
+  background: #fff8df;
+  color: #6d4d10;
 }
 
 .sidebar {
@@ -167,6 +229,7 @@ button {
 
 .icon-button,
 .primary-button,
+.ghost-button,
 .danger-button {
   display: inline-grid;
   min-height: 40px;
@@ -199,6 +262,26 @@ button {
 .danger-button {
   padding: 0 14px;
   color: var(--red);
+}
+
+.ghost-button {
+  padding: 0 14px;
+  background: transparent;
+}
+
+.user-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  max-width: 240px;
+  padding: 0 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .view {
@@ -290,6 +373,68 @@ select {
 
 .panel.full {
   width: 100%;
+}
+
+.grass-panel {
+  grid-column: 1 / -1;
+  grid-row: auto;
+}
+
+.grass-scroll {
+  overflow-x: auto;
+  margin-top: 16px;
+  padding-bottom: 4px;
+}
+
+.grass-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 12px;
+  grid-template-rows: repeat(7, 12px);
+  gap: 4px;
+  width: max-content;
+  min-width: 100%;
+}
+
+.grass-cell,
+.grass-legend i {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: #e3e9e4;
+}
+
+.grass-cell {
+  border: 0;
+}
+
+.grass-cell[data-level="1"],
+.grass-legend i[data-level="1"] {
+  background: #b8e4bf;
+}
+
+.grass-cell[data-level="2"],
+.grass-legend i[data-level="2"] {
+  background: #71c983;
+}
+
+.grass-cell[data-level="3"],
+.grass-legend i[data-level="3"] {
+  background: #2f9d58;
+}
+
+.grass-cell[data-level="4"],
+.grass-legend i[data-level="4"] {
+  background: #17693b;
+}
+
+.grass-legend {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 canvas {

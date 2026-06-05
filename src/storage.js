@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { createClient } from "@supabase/supabase-js";
 import { addDays, getDateRange } from "./time.js";
 
 const INITIAL_DATA = {
@@ -9,7 +10,18 @@ const INITIAL_DATA = {
   entries: []
 };
 
-export class StudyStore {
+export function createStudyStore(config) {
+  if (config.storageDriver === "supabase") {
+    return new SupabaseStudyStore({
+      url: config.supabaseUrl,
+      serviceRoleKey: config.supabaseServiceRoleKey
+    });
+  }
+
+  return new FileStudyStore(config.dataFile);
+}
+
+export class FileStudyStore {
   constructor(filePath) {
     this.filePath = filePath;
     this.data = structuredClone(INITIAL_DATA);
@@ -82,32 +94,34 @@ export class StudyStore {
     return this.data.users[userId];
   }
 
-  getUserGoal(userId, defaultGoalMinutes) {
+  async getUserGoal(userId, defaultGoalMinutes) {
     return this.data.users[userId]?.goalMinutes || defaultGoalMinutes;
   }
 
-  getDayTotal(dateKey, userId = null) {
+  async getDayTotal(dateKey, userId = null) {
     return this.data.entries
       .filter((entry) => entry.date === dateKey && (!userId || entry.userId === userId))
       .reduce((sum, entry) => sum + entry.minutes, 0);
   }
 
-  getUserDayTotal(userId, dateKey) {
+  async getUserDayTotal(userId, dateKey) {
     return this.getDayTotal(dateKey, userId);
   }
 
-  getTrend(endDateKey, days, userId = null) {
+  async getTrend(endDateKey, days, userId = null) {
     return getDateRange(endDateKey, days).map((dateKey) => ({
       date: dateKey,
-      minutes: this.getDayTotal(dateKey, userId)
+      minutes: this.data.entries
+        .filter((entry) => entry.date === dateKey && (!userId || entry.userId === userId))
+        .reduce((sum, entry) => sum + entry.minutes, 0)
     }));
   }
 
-  getUserTrend(userId, endDateKey, days) {
+  async getUserTrend(userId, endDateKey, days) {
     return this.getTrend(endDateKey, days, userId);
   }
 
-  getRanking(endDateKey, days) {
+  async getRanking(endDateKey, days) {
     const startDateKey = addDays(endDateKey, -days + 1);
     const totals = new Map();
 
@@ -128,16 +142,176 @@ export class StudyStore {
 
     return [...totals.values()].sort((a, b) => b.minutes - a.minutes);
   }
+}
 
-  getActiveUsersForDate(dateKey) {
-    const userIds = new Set(
-      this.data.entries.filter((entry) => entry.date === dateKey).map((entry) => entry.userId)
-    );
+export class SupabaseStudyStore {
+  constructor({ url, serviceRoleKey }) {
+    if (!url || !serviceRoleKey) {
+      throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for Supabase storage.");
+    }
 
-    return [...userIds].map((userId) => ({
-      userId,
-      username: this.data.users[userId]?.username || userId,
-      goalMinutes: this.data.users[userId]?.goalMinutes
+    this.client = createClient(url, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false
+      }
+    });
+  }
+
+  async load() {
+    const { error } = await this.client.from("study_entries").select("id").limit(1);
+    if (error) {
+      throw error;
+    }
+  }
+
+  async addEntry({ userId, username, minutes, dateKey, channelId, messageId, source }) {
+    const payload = {
+      discord_user_id: userId,
+      username,
+      minutes,
+      study_date: dateKey,
+      channel_id: channelId,
+      message_id: messageId,
+      source
+    };
+
+    const { data, error } = await this.client.from("study_entries").insert(payload).select().single();
+    if (error) {
+      throw error;
+    }
+
+    return fromSupabaseEntry(data);
+  }
+
+  async setGoal(userId, username, goalMinutes) {
+    const payload = {
+      discord_user_id: userId,
+      username,
+      goal_minutes: goalMinutes,
+      updated_at: new Date().toISOString()
+    };
+
+    const { data, error } = await this.client
+      .from("study_user_profiles")
+      .upsert(payload, { onConflict: "discord_user_id" })
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  }
+
+  async getUserGoal(userId, defaultGoalMinutes) {
+    const { data, error } = await this.client
+      .from("study_user_profiles")
+      .select("goal_minutes")
+      .eq("discord_user_id", userId)
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    return data?.goal_minutes || defaultGoalMinutes;
+  }
+
+  async getDayTotal(dateKey, userId = null) {
+    let query = this.client.from("study_entries").select("minutes").eq("study_date", dateKey);
+    if (userId) {
+      query = query.eq("discord_user_id", userId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw error;
+    }
+
+    return sumMinutes(data);
+  }
+
+  async getUserDayTotal(userId, dateKey) {
+    return this.getDayTotal(dateKey, userId);
+  }
+
+  async getTrend(endDateKey, days, userId = null) {
+    const startDateKey = addDays(endDateKey, -days + 1);
+    let query = this.client
+      .from("study_entries")
+      .select("study_date, minutes")
+      .gte("study_date", startDateKey)
+      .lte("study_date", endDateKey);
+
+    if (userId) {
+      query = query.eq("discord_user_id", userId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw error;
+    }
+
+    const totals = new Map();
+    for (const entry of data) {
+      totals.set(entry.study_date, (totals.get(entry.study_date) || 0) + entry.minutes);
+    }
+
+    return getDateRange(endDateKey, days).map((dateKey) => ({
+      date: dateKey,
+      minutes: totals.get(dateKey) || 0
     }));
   }
+
+  async getUserTrend(userId, endDateKey, days) {
+    return this.getTrend(endDateKey, days, userId);
+  }
+
+  async getRanking(endDateKey, days) {
+    const startDateKey = addDays(endDateKey, -days + 1);
+    const { data, error } = await this.client
+      .from("study_entries")
+      .select("auth_user_id, discord_user_id, username, minutes")
+      .gte("study_date", startDateKey)
+      .lte("study_date", endDateKey);
+
+    if (error) {
+      throw error;
+    }
+
+    const totals = new Map();
+    for (const entry of data) {
+      const userId = entry.auth_user_id || entry.discord_user_id || entry.username;
+      const current = totals.get(userId) || {
+        userId,
+        username: entry.username,
+        minutes: 0
+      };
+      current.minutes += entry.minutes;
+      current.username = entry.username || current.username;
+      totals.set(userId, current);
+    }
+
+    return [...totals.values()].sort((a, b) => b.minutes - a.minutes);
+  }
+}
+
+function fromSupabaseEntry(entry) {
+  return {
+    id: entry.id,
+    userId: entry.discord_user_id || entry.auth_user_id,
+    username: entry.username,
+    minutes: entry.minutes,
+    date: entry.study_date,
+    channelId: entry.channel_id,
+    messageId: entry.message_id,
+    source: entry.source,
+    createdAt: entry.created_at
+  };
+}
+
+function sumMinutes(entries) {
+  return entries.reduce((sum, entry) => sum + entry.minutes, 0);
 }

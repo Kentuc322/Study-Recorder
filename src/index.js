@@ -9,11 +9,11 @@ import {
   Routes,
   SlashCommandBuilder
 } from "discord.js";
-import { StudyStore } from "./storage.js";
+import { createStudyStore } from "./storage.js";
 import { getDateKey, msUntilNextClockTime, parseClockTime } from "./time.js";
 
 const config = readConfig();
-const store = new StudyStore(config.dataFile);
+const store = createStudyStore(config);
 const EMBED_COLORS = {
   record: 0x2ecc71,
   progress: 0x3498db,
@@ -64,8 +64,8 @@ client.on(Events.MessageCreate, async (message) => {
     source: "message"
   });
 
-  const total = store.getUserDayTotal(message.author.id, dateKey);
-  const goal = store.getUserGoal(message.author.id, config.defaultGoalMinutes);
+  const total = await store.getUserDayTotal(message.author.id, dateKey);
+  const goal = await store.getUserGoal(message.author.id, config.defaultGoalMinutes);
   await message.react("✅").catch(() => {});
   await message.reply({
     embeds: [
@@ -122,8 +122,8 @@ async function handleRecordCommand(interaction) {
     source: "slash-command"
   });
 
-  const total = store.getUserDayTotal(interaction.user.id, dateKey);
-  const goal = store.getUserGoal(interaction.user.id, config.defaultGoalMinutes);
+  const total = await store.getUserDayTotal(interaction.user.id, dateKey);
+  const goal = await store.getUserGoal(interaction.user.id, config.defaultGoalMinutes);
   await interaction.reply({
     embeds: [
       buildRecordEmbed({
@@ -139,9 +139,9 @@ async function handleRecordCommand(interaction) {
 
 async function handleProgressCommand(interaction) {
   const dateKey = getDateKey(new Date(), config.timeZone);
-  const total = store.getUserDayTotal(interaction.user.id, dateKey);
-  const goal = store.getUserGoal(interaction.user.id, config.defaultGoalMinutes);
-  const trend = store.getUserTrend(interaction.user.id, dateKey, 7);
+  const total = await store.getUserDayTotal(interaction.user.id, dateKey);
+  const goal = await store.getUserGoal(interaction.user.id, config.defaultGoalMinutes);
+  const trend = await store.getUserTrend(interaction.user.id, dateKey, 7);
   await interaction.reply({
     embeds: [
       buildProgressEmbed({
@@ -168,7 +168,7 @@ async function handleGoalCommand(interaction) {
 async function handleSummaryCommand(interaction) {
   const days = interaction.options.getInteger("days") || 7;
   const dateKey = getDateKey(new Date(), config.timeZone);
-  const trend = store.getUserTrend(interaction.user.id, dateKey, days);
+  const trend = await store.getUserTrend(interaction.user.id, dateKey, days);
   const total = trend.reduce((sum, day) => sum + day.minutes, 0);
   await interaction.reply({
     embeds: [
@@ -187,7 +187,7 @@ async function handleSummaryCommand(interaction) {
 async function handleRankingCommand(interaction) {
   const days = interaction.options.getInteger("days") || 7;
   const dateKey = getDateKey(new Date(), config.timeZone);
-  const ranking = store.getRanking(dateKey, days).slice(0, 10);
+  const ranking = (await store.getRanking(dateKey, days)).slice(0, 10);
 
   await interaction.reply({
     embeds: [buildRankingEmbed(ranking, days, dateKey)]
@@ -228,8 +228,8 @@ async function sendMorningReport() {
 async function sendNoonReport() {
   const channel = await getReportChannel();
   const dateKey = getDateKey(new Date(), config.timeZone);
-  const total = store.getDayTotal(dateKey);
-  const ranking = store.getRanking(dateKey, 1).slice(0, 5);
+  const total = await store.getDayTotal(dateKey);
+  const ranking = (await store.getRanking(dateKey, 1)).slice(0, 5);
   await channel.send({
     embeds: [buildNoonReportEmbed({ dateKey, total, ranking })]
   });
@@ -238,9 +238,9 @@ async function sendNoonReport() {
 async function sendEveningReport() {
   const channel = await getReportChannel();
   const dateKey = getDateKey(new Date(), config.timeZone);
-  const total = store.getDayTotal(dateKey);
-  const trend = store.getTrend(dateKey, 14);
-  const ranking = store.getRanking(dateKey, 1).slice(0, 10);
+  const total = await store.getDayTotal(dateKey);
+  const trend = await store.getTrend(dateKey, 14);
+  const ranking = (await store.getRanking(dateKey, 1)).slice(0, 10);
 
   await channel.send({
     embeds: [buildEveningReportEmbed({ dateKey, total, trend, ranking })]
@@ -493,7 +493,12 @@ function readConfig() {
     morningReportTime: parseClockTime(process.env.MORNING_REPORT_TIME, "08:00"),
     noonReportTime: parseClockTime(process.env.NOON_REPORT_TIME, "12:00"),
     eveningReportTime: parseClockTime(process.env.EVENING_REPORT_TIME, "21:00"),
-    dataFile: process.env.DATA_FILE || "./data/study-records.json"
+    dataFile: process.env.DATA_FILE || "./data/study-records.json",
+    storageDriver:
+      process.env.STORAGE_DRIVER ||
+      (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY ? "supabase" : "file"),
+    supabaseUrl: process.env.SUPABASE_URL || null,
+    supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || null
   };
 }
 

@@ -6,10 +6,13 @@ Discord の指定チャンネルに送られた勉強分数を記録し、毎日
 
 - 指定チャンネルで `25` のように数字だけを送信すると、その分数を記録
 - JSON ファイルに永続保存
+- Supabase を使うと Discord Bot と Web ダッシュボードで同じ記録を共有
 - 朝: 当日の目標分数を通知
 - 昼: 当日の進捗を通知
 - 夜: 当日の合計と直近14日の推移を通知
 - 通知とスラッシュコマンドの結果を Embed で見やすく表示
+- Web ダッシュボードは Google ログイン必須
+- GitHub の芝生のような勉強記録グラフを表示
 - スラッシュコマンドで随時記録・目標設定・進捗確認
 
 ## セットアップ
@@ -38,6 +41,9 @@ MORNING_REPORT_TIME=08:00
 NOON_REPORT_TIME=12:00
 EVENING_REPORT_TIME=21:00
 DATA_FILE=./data/study-records.json
+STORAGE_DRIVER=supabase
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key_for_bot_only
 ```
 
 `GUILD_ID` は任意ですが、開発中は設定するとスラッシュコマンドの反映が早くなります。未設定の場合はグローバルコマンドとして登録され、反映に時間がかかることがあります。
@@ -70,7 +76,78 @@ OAuth2 URL Generator で以下を選んで招待してください。
 
 ## データ保存形式
 
-デフォルトでは `./data/study-records.json` に保存します。バックアップしたい場合はこのファイルをコピーしてください。
+デフォルトでは `./data/study-records.json` に保存します。Supabase を設定すると、Discord Bot と Web ダッシュボードが同じ `study_entries` テーブルを参照します。
+
+## Supabase 対応手順
+
+推奨構成は `Discord Bot + GitHub Pages + Supabase` です。GitHub Pages は静的サイトなので、記録の共有保存とGoogleログインは Supabase 側で行います。
+
+### 1. Supabase プロジェクトを作る
+
+1. Supabase で新しいプロジェクトを作成します。
+2. `SQL Editor` を開きます。
+3. [supabase/schema.sql](./supabase/schema.sql) の内容を実行します。
+
+これで以下のテーブルと Row Level Security が作成されます。
+
+- `study_entries`: 勉強記録
+- `study_user_profiles`: 表示名と目標分数
+
+RLS は次の前提です。
+
+- Googleログイン済みユーザーだけが記録を閲覧できます。
+- Webからは自分のWeb記録だけ追加・削除できます。
+- Discord Bot は `service_role` key を使うため、RLSを越えてDiscord記録を追加できます。
+
+### 2. Google ログインを有効にする
+
+Supabase の `Authentication > Providers > Google` を有効にします。
+
+Google Cloud 側で OAuth Client を作成し、Supabase の Google Provider 画面に表示されている callback URL を Google OAuth の Authorized redirect URI に追加してください。
+
+GitHub Pages で公開する場合は、Supabase の `Authentication > URL Configuration` に以下も設定します。
+
+- Site URL: `https://<github-user>.github.io/<repository-name>/`
+- Redirect URLs: `https://<github-user>.github.io/<repository-name>/`
+
+ローカル確認もする場合は、Redirect URLs に `http://127.0.0.1:4173/` なども追加します。
+
+### 3. Web ダッシュボードに Supabase anon key を設定する
+
+[docs/config.js](./docs/config.js) を編集します。
+
+```js
+export const SUPABASE_CONFIG = {
+  url: "https://your-project-ref.supabase.co",
+  anonKey: "your-public-anon-key",
+  dailyGoalMinutes: 120
+};
+```
+
+`anonKey` はブラウザで使う公開キーです。公開されてもよい前提のキーですが、RLSを必ず有効にしてください。
+
+`service_role` key は絶対に `docs/` 配下へ入れないでください。GitHub Pagesで公開されます。
+
+### 4. Discord Bot に Supabase service_role key を設定する
+
+`.env` に以下を追加します。
+
+```env
+STORAGE_DRIVER=supabase
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key_for_bot_only
+```
+
+`SUPABASE_SERVICE_ROLE_KEY` はBotサーバー専用です。GitHubへコミットしないでください。
+
+### 5. 起動する
+
+```bash
+npm install
+npm start
+```
+
+これ以降、Discordで送信された勉強時間とWebダッシュボードで追加した勉強時間は同じSupabaseテーブルに保存され、同じダッシュボード上で閲覧できます。
 
 ## GitHub Pages ダッシュボード
 
@@ -86,9 +163,9 @@ GitHub Pages で公開する場合は、GitHub リポジトリの `Settings > Pa
 - Branch: `main`
 - Folder: `/docs`
 
-現在のダッシュボードは GitHub Pages だけで動くように、ブラウザの `localStorage` に保存します。JSON のインポート・エクスポートもできます。
+現在のダッシュボードは Supabase に保存します。JSON のインポート・エクスポートもできます。
 
-ただし、GitHub Pages は静的ホスティングなので、全ユーザーで共有する勉強記録を安全に保存するサーバー機能はありません。Discord Bot と Web ダッシュボードで同じデータを扱うには、次のような無料枠のある保存先に切り替えるのが現実的です。
+GitHub Pages は静的ホスティングなので、全ユーザーで共有する勉強記録を安全に保存するサーバー機能はありません。Discord Bot と Web ダッシュボードで同じデータを扱うには、次のような無料枠のある保存先を使うのが現実的です。
 
 ### 無料で使いやすいデータ保存先
 

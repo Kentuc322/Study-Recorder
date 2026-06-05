@@ -1,7 +1,18 @@
-const STORAGE_KEY = "study-recorder-dashboard:v1";
-const SETTINGS_KEY = "study-recorder-settings:v1";
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+import { SUPABASE_CONFIG } from "./config.js";
+
+const settings = {
+  dailyGoalMinutes: SUPABASE_CONFIG.dailyGoalMinutes || 120,
+  lastUser: ""
+};
 
 const elements = {
+  authScreen: document.querySelector("#auth-screen"),
+  appShell: document.querySelector("#app-shell"),
+  loginButton: document.querySelector("#login-button"),
+  logoutButton: document.querySelector("#logout-button"),
+  setupWarning: document.querySelector("#setup-warning"),
+  signedInUser: document.querySelector("#signed-in-user"),
   todayLabel: document.querySelector("#today-label"),
   recordForm: document.querySelector("#record-form"),
   userInput: document.querySelector("#user-input"),
@@ -22,45 +33,132 @@ const elements = {
   recordsTable: document.querySelector("#records-table"),
   chart: document.querySelector("#trend-chart"),
   chartRange: document.querySelector("#chart-range"),
+  grassGrid: document.querySelector("#grass-grid"),
   clearButton: document.querySelector("#clear-button"),
   exportButton: document.querySelector("#export-button"),
   importInput: document.querySelector("#import-input"),
   emptyRowTemplate: document.querySelector("#empty-row-template")
 };
 
-let records = loadRecords();
-let settings = loadSettings();
+const hasSupabaseConfig = Boolean(SUPABASE_CONFIG.url && SUPABASE_CONFIG.anonKey);
+const supabase = hasSupabaseConfig
+  ? createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true
+      }
+    })
+  : null;
+
+let records = [];
+let currentUser = null;
 
 initialize();
 
-function initialize() {
+async function initialize() {
   const today = getDateKey(new Date());
   elements.todayLabel.textContent = today;
   elements.dateInput.value = today;
   elements.goalInput.value = settings.dailyGoalMinutes;
-  elements.userInput.value = settings.lastUser || "";
+  elements.setupWarning.hidden = hasSupabaseConfig;
+  elements.loginButton.disabled = !hasSupabaseConfig;
 
+  bindEvents();
+
+  if (!hasSupabaseConfig) {
+    showAuth();
+    return;
+  }
+
+  const { data, error } = await supabase.auth.getSession();
+  if (error) {
+    showError(error.message);
+  }
+
+  currentUser = data.session?.user || null;
+  supabase.auth.onAuthStateChange(async (_event, session) => {
+    currentUser = session?.user || null;
+    await syncAuthState();
+  });
+
+  await syncAuthState();
+}
+
+function bindEvents() {
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => setView(button.dataset.view));
   });
 
-  elements.recordForm.addEventListener("submit", (event) => {
+  elements.loginButton.addEventListener("click", signInWithGoogle);
+  elements.logoutButton.addEventListener("click", signOut);
+
+  elements.recordForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    addRecord();
+    await addRecord();
   });
 
-  elements.goalInput.addEventListener("change", () => {
+  elements.goalInput.addEventListener("change", async () => {
     settings.dailyGoalMinutes = clampNumber(Number(elements.goalInput.value), 1, 1440);
-    saveSettings();
+    await saveUserProfile();
     render();
   });
 
   elements.chartRange.addEventListener("change", render);
-  elements.clearButton.addEventListener("click", clearRecords);
+  elements.clearButton.addEventListener("click", clearOwnDashboardRecords);
   elements.exportButton.addEventListener("click", exportRecords);
   elements.importInput.addEventListener("change", importRecords);
+  window.addEventListener("resize", renderChart);
+}
 
+async function syncAuthState() {
+  if (!currentUser) {
+    records = [];
+    showAuth();
+    return;
+  }
+
+  showApp();
+  await loadUserProfile();
+  await loadRecords();
   render();
+}
+
+async function signInWithGoogle() {
+  if (!supabase) {
+    return;
+  }
+
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: window.location.origin + window.location.pathname
+    }
+  });
+
+  if (error) {
+    showError(error.message);
+  }
+}
+
+async function signOut() {
+  const { error } = await supabase.auth.signOut();
+  if (error) {
+    showError(error.message);
+  }
+}
+
+function showAuth() {
+  elements.authScreen.hidden = false;
+  elements.appShell.hidden = true;
+}
+
+function showApp() {
+  elements.authScreen.hidden = true;
+  elements.appShell.hidden = false;
+  const displayName = getDisplayName();
+  elements.signedInUser.textContent = displayName;
+  elements.userInput.value = settings.lastUser || displayName;
 }
 
 function setView(view) {
@@ -72,34 +170,104 @@ function setView(view) {
   });
 }
 
-function addRecord() {
-  const username = elements.userInput.value.trim() || "Guest";
+async function loadRecords() {
+  const { data, error } = await supabase
+    .from("study_entries")
+    .select("id, auth_user_id, discord_user_id, username, minutes, study_date, source, created_at")
+    .order("study_date", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    showError(error.message);
+    return;
+  }
+
+  records = normalizeEntries(data);
+}
+
+async function loadUserProfile() {
+  const { data, error } = await supabase
+    .from("study_user_profiles")
+    .select("username, goal_minutes")
+    .eq("auth_user_id", currentUser.id)
+    .maybeSingle();
+
+  if (error) {
+    showError(error.message);
+    return;
+  }
+
+  settings.lastUser = data?.username || getDisplayName();
+  settings.dailyGoalMinutes = data?.goal_minutes || SUPABASE_CONFIG.dailyGoalMinutes || 120;
+  elements.goalInput.value = settings.dailyGoalMinutes;
+  elements.userInput.value = settings.lastUser;
+}
+
+async function saveUserProfile() {
+  if (!currentUser) {
+    return;
+  }
+
+  const payload = {
+    auth_user_id: currentUser.id,
+    username: elements.userInput.value.trim() || getDisplayName(),
+    goal_minutes: settings.dailyGoalMinutes,
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabase
+    .from("study_user_profiles")
+    .upsert(payload, { onConflict: "auth_user_id" });
+
+  if (error) {
+    showError(error.message);
+  }
+}
+
+async function addRecord() {
+  const username = elements.userInput.value.trim() || getDisplayName();
   const minutes = clampNumber(Number(elements.minutesInput.value), 1, 1440);
   const date = elements.dateInput.value || getDateKey(new Date());
 
-  records.push({
-    id: crypto.randomUUID(),
+  const payload = {
+    auth_user_id: currentUser.id,
     username,
     minutes,
-    date,
-    source: "dashboard",
-    createdAt: new Date().toISOString()
-  });
+    study_date: date,
+    source: "dashboard"
+  };
+
+  const { error } = await supabase.from("study_entries").insert(payload);
+  if (error) {
+    showError(error.message);
+    return;
+  }
 
   settings.lastUser = username;
-  saveRecords();
-  saveSettings();
+  await saveUserProfile();
   elements.minutesInput.value = "";
   elements.minutesInput.focus();
+  await loadRecords();
   render();
 }
 
-function clearRecords() {
-  if (!window.confirm("すべての記録を削除しますか？")) {
+async function clearOwnDashboardRecords() {
+  if (!window.confirm("自分がWebから登録した記録だけを削除しますか？Discordの記録は残ります。")) {
     return;
   }
-  records = [];
-  saveRecords();
+
+  const { error } = await supabase
+    .from("study_entries")
+    .delete()
+    .eq("auth_user_id", currentUser.id)
+    .eq("source", "dashboard");
+
+  if (error) {
+    showError(error.message);
+    return;
+  }
+
+  await loadRecords();
   render();
 }
 
@@ -126,14 +294,27 @@ async function importRecords(event) {
 
   const text = await file.text();
   const parsed = JSON.parse(text);
-  const importedEntries = Array.isArray(parsed) ? parsed : parsed.entries;
-  if (!Array.isArray(importedEntries)) {
-    window.alert("entries 配列を含む JSON を選択してください。");
+  const importedEntries = normalizeEntries(Array.isArray(parsed) ? parsed : parsed.entries || []);
+  if (importedEntries.length === 0) {
+    window.alert("インポートできる記録がありません。");
     return;
   }
 
-  records = normalizeEntries(importedEntries);
-  saveRecords();
+  const payload = importedEntries.map((entry) => ({
+    auth_user_id: currentUser.id,
+    username: entry.username || getDisplayName(),
+    minutes: entry.minutes,
+    study_date: entry.date,
+    source: "dashboard-import"
+  }));
+
+  const { error } = await supabase.from("study_entries").insert(payload);
+  if (error) {
+    showError(error.message);
+    return;
+  }
+
+  await loadRecords();
   render();
   event.target.value = "";
 }
@@ -159,9 +340,28 @@ function render() {
   elements.goalPercent.textContent = `${percent}%`;
   elements.goalCopy.textContent = remaining === 0 ? "今日の目標を達成済み" : `目標まで ${formatMinutes(remaining)}`;
 
+  renderGrassGraph();
   renderRanking();
   renderRecordsTable();
   renderChart();
+}
+
+function renderGrassGraph() {
+  const today = getDateKey(new Date());
+  const days = 371;
+  const trend = buildTrend(today, days);
+  const max = Math.max(...trend.map((item) => item.minutes), 1);
+  elements.grassGrid.innerHTML = "";
+
+  for (const item of trend) {
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "grass-cell";
+    cell.dataset.level = getGrassLevel(item.minutes, max);
+    cell.title = `${item.date}: ${formatMinutes(item.minutes)}`;
+    cell.setAttribute("aria-label", cell.title);
+    elements.grassGrid.append(cell);
+  }
 }
 
 function renderRanking() {
@@ -267,43 +467,17 @@ function renderChart() {
   context.fillText(trend.at(-1)?.date.slice(5) || "", width - padding.right - 36, height - 10);
 }
 
-function loadRecords() {
-  try {
-    return normalizeEntries(JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"));
-  } catch {
-    return [];
-  }
-}
-
-function loadSettings() {
-  try {
-    return {
-      dailyGoalMinutes: 120,
-      lastUser: "",
-      ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}")
-    };
-  } catch {
-    return { dailyGoalMinutes: 120, lastUser: "" };
-  }
-}
-
-function saveRecords() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-}
-
-function saveSettings() {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-}
-
 function normalizeEntries(entries) {
   return entries
     .map((entry) => ({
       id: entry.id || crypto.randomUUID(),
+      authUserId: entry.auth_user_id || entry.authUserId || null,
+      discordUserId: entry.discord_user_id || entry.discordUserId || null,
       username: entry.username || entry.user || "Guest",
       minutes: clampNumber(Number(entry.minutes), 1, 1440),
-      date: entry.date || getDateKey(new Date(entry.createdAt || Date.now())),
+      date: entry.study_date || entry.date || getDateKey(new Date(entry.created_at || entry.createdAt || Date.now())),
       source: entry.source || "import",
-      createdAt: entry.createdAt || new Date().toISOString()
+      createdAt: entry.created_at || entry.createdAt || new Date().toISOString()
     }))
     .filter((entry) => entry.date && Number.isFinite(entry.minutes));
 }
@@ -329,6 +503,23 @@ function calculateStreak(today) {
   return streak;
 }
 
+function getGrassLevel(minutes, max) {
+  if (minutes <= 0) {
+    return 0;
+  }
+  const ratio = minutes / max;
+  if (ratio <= 0.25) {
+    return 1;
+  }
+  if (ratio <= 0.5) {
+    return 2;
+  }
+  if (ratio <= 0.75) {
+    return 3;
+  }
+  return 4;
+}
+
 function addDays(dateKey, days) {
   const [year, month, day] = dateKey.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day + days));
@@ -338,6 +529,15 @@ function addDays(dateKey, days) {
 function getDateKey(date) {
   const offset = date.getTimezoneOffset() * 60 * 1000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function getDisplayName() {
+  return (
+    currentUser?.user_metadata?.full_name ||
+    currentUser?.user_metadata?.name ||
+    currentUser?.email ||
+    "Guest"
+  );
 }
 
 function sum(values) {
@@ -364,4 +564,6 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-window.addEventListener("resize", renderChart);
+function showError(message) {
+  window.alert(`エラー: ${message}`);
+}
