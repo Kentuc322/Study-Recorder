@@ -18,7 +18,7 @@
         </div>
         <h2 id="auth-title">Googleアカウントでログイン</h2>
         <p id="auth-copy">
-          勉強記録を表示・追加するにはログインが必要です。
+          勉強記録を表示・追加するには、Googleアカウントでログインしてください。記録はログイン中のメールアドレスに紐づきます。
         </p>
         <button class="primary-button auth-button" id="login-button" type="button">Googleでログイン</button>
         <p class="setup-warning" id="setup-warning" hidden>
@@ -76,8 +76,8 @@
             </div>
             <form class="record-form" id="record-form">
               <label>
-                <span>表示名</span>
-                <input id="user-input" name="user" type="text" autocomplete="name" placeholder="Ken" />
+                <span>ログインメール</span>
+                <input id="user-input" name="user" type="email" readonly />
               </label>
               <label>
                 <span>分数</span>
@@ -88,6 +88,32 @@
                 <input id="date-input" name="date" type="date" required />
               </label>
               <button class="primary-button" type="submit">＋ 記録</button>
+            </form>
+          </section>
+
+          <section class="panel quality-panel" aria-labelledby="quality-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Quality</p>
+                <h3 id="quality-title">勉強の質を記録</h3>
+              </div>
+            </div>
+            <form class="quality-form" id="quality-form">
+              <label>
+                <span>評価</span>
+                <select id="quality-score-input" required>
+                  <option value="1">1 - かなり低い</option>
+                  <option value="2">2 - やや低い</option>
+                  <option value="3" selected>3 - 普通</option>
+                  <option value="4">4 - 良い</option>
+                  <option value="5">5 - とても良い</option>
+                </select>
+              </label>
+              <label>
+                <span>メモ</span>
+                <input id="quality-note-input" type="text" maxlength="200" placeholder="例: 集中できた" />
+              </label>
+              <button class="primary-button" id="quality-save-button" type="submit">＋ 評価を記録</button>
             </form>
           </section>
 
@@ -111,6 +137,11 @@
               <span>総記録</span>
               <strong id="entry-count">0件</strong>
               <small id="all-time-total">合計 0分</small>
+            </article>
+            <article class="metric metric-accent">
+              <span>先週比</span>
+              <strong id="week-change-value">0%</strong>
+              <small id="week-change-detail">先週と比較して変化を表示します</small>
             </article>
           </section>
 
@@ -140,6 +171,26 @@
                 </select>
               </div>
               <canvas id="trend-chart" width="960" height="320" aria-label="Study trend chart"></canvas>
+            </article>
+
+            <article class="panel wide">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Outcome</p>
+                  <h3>勉強成果の指数</h3>
+                </div>
+              </div>
+              <canvas id="outcome-chart" width="960" height="320" aria-label="Study outcome chart"></canvas>
+            </article>
+
+            <article class="panel wide">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">Distribution</p>
+                  <h3>直近14日の円グラフ</h3>
+                </div>
+              </div>
+              <canvas id="distribution-chart" width="960" height="320" aria-label="Study distribution chart"></canvas>
             </article>
 
             <article class="panel">
@@ -198,10 +249,26 @@
               <p class="eyebrow">Settings</p>
               <h3>ダッシュボード設定</h3>
             </div>
-            <label class="setting-row">
-              <span>毎日の目標分数</span>
-              <input id="goal-input" type="number" min="1" max="1440" />
-            </label>
+            <div class="goal-editor">
+              <label class="setting-row">
+                <span>曜日</span>
+                <select id="goal-weekday-input">
+                  <option value="0">日曜日</option>
+                  <option value="1">月曜日</option>
+                  <option value="2">火曜日</option>
+                  <option value="3">水曜日</option>
+                  <option value="4">木曜日</option>
+                  <option value="5">金曜日</option>
+                  <option value="6">土曜日</option>
+                </select>
+              </label>
+              <label class="setting-row">
+                <span>目標分数</span>
+                <input id="goal-minutes-input" type="number" min="1" max="1440" placeholder="120" />
+              </label>
+              <button class="primary-button goal-save-button" id="goal-save-button" type="button">保存</button>
+            </div>
+            <div class="weekly-goal-summary" id="weekly-goal-summary" aria-label="Weekly goal summary"></div>
             <div class="notes">
               <h4>GitHub Pages での保存について</h4>
               <p>
@@ -213,6 +280,8 @@
         </section>
       </main>
     </div>
+
+    <div class="chart-tooltip" id="chart-tooltip" hidden></div>
 
     <template id="empty-row-template">
       <tr>

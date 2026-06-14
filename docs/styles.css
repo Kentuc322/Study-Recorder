@@ -356,6 +356,83 @@ select {
   line-height: 1;
 }
 
+.metric-accent {
+  background: linear-gradient(180deg, #f5f8f5 0%, #ffffff 100%);
+}
+
+.quality-panel {
+  margin-bottom: 18px;
+}
+
+.quality-form,
+.goal-editor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.goal-editor {
+  grid-template-columns: repeat(2, minmax(0, 180px)) auto;
+}
+
+.goal-save-button {
+  min-width: 120px;
+}
+
+.weekly-goal-summary {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.weekly-goal-item {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  text-align: center;
+}
+
+.weekly-goal-item span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.weekly-goal-item strong {
+  font-size: 16px;
+}
+
+.chart-tooltip {
+  position: fixed;
+  z-index: 20;
+  min-width: 140px;
+  max-width: 220px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(16, 25, 20, 0.94);
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+
+.chart-tooltip div + div {
+  margin-top: 2px;
+}
+
+.quality-form input,
+.quality-form select,
+.goal-editor input,
+.goal-editor select {
+  min-width: 0;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
@@ -428,6 +505,11 @@ select {
   background: #17693b;
 }
 
+.grass-cell:hover {
+  outline: 2px solid rgba(23, 105, 59, 0.24);
+  outline-offset: 1px;
+}
+
 .grass-legend {
   display: inline-flex;
   gap: 5px;
@@ -442,6 +524,10 @@ canvas {
   width: 100%;
   height: 320px;
   margin-top: 16px;
+}
+
+canvas:hover {
+  cursor: crosshair;
 }
 
 .goal-ring {
@@ -536,6 +622,11 @@ td {
   max-width: 280px;
 }
 
+.quality-form .setting-row,
+.goal-editor .setting-row {
+  max-width: none;
+}
+
 .notes {
   padding: 16px;
   border: 1px solid var(--line);
@@ -575,6 +666,12 @@ td {
     grid-template-columns: 1fr;
   }
 
+  .quality-form,
+  .goal-editor,
+  .weekly-goal-summary {
+    grid-template-columns: 1fr;
+  }
+
   .topbar-actions {
     justify-content: flex-end;
   }
@@ -592,6 +689,10 @@ td {
 
   .metric strong {
     font-size: 26px;
+  }
+
+  .chart-tooltip {
+    max-width: 180px;
   }
 
   th,

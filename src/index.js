@@ -9,7 +9,13 @@ import {
   Routes,
   SlashCommandBuilder
 } from "discord.js";
-import { createStudyStore } from "./storage.js";
+import {
+  AccountNotLinkedError,
+  createStudyStore,
+  getGoalForDate,
+  normalizeEmail,
+  normalizeWeeklyGoals
+} from "./storage.js";
 import { getDateKey, msUntilNextClockTime, parseClockTime } from "./time.js";
 
 const config = readConfig();
@@ -21,7 +27,9 @@ const EMBED_COLORS = {
   morning: 0xffb84d,
   noon: 0x1abc9c,
   evening: 0x8e44ad,
-  ranking: 0xe67e22
+  ranking: 0xe67e22,
+  account: 0x5865f2,
+  quality: 0x9b59b6
 };
 
 const client = new Client({
@@ -53,32 +61,43 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  const dateKey = getDateKey(new Date(), config.timeZone);
-  await store.addEntry({
-    userId: message.author.id,
-    username: message.author.username,
-    minutes,
-    dateKey,
-    channelId: message.channelId,
-    messageId: message.id,
-    source: "message"
-  });
+  try {
+    const dateKey = getDateKey(new Date(), config.timeZone);
+    const entry = await store.addEntry({
+      userId: message.author.id,
+      username: message.author.username,
+      minutes,
+      dateKey,
+      channelId: message.channelId,
+      messageId: message.id,
+      source: "message"
+    });
 
-  const total = await store.getUserDayTotal(message.author.id, dateKey);
-  const goal = await store.getUserGoal(message.author.id, config.defaultGoalMinutes);
-  await message.react("✅").catch(() => {});
-  await message.reply({
-    embeds: [
-      buildRecordEmbed({
-        username: message.author.username,
-        minutes,
-        total,
-        goal,
-        dateKey
-      })
-    ],
-    allowedMentions: { repliedUser: false }
-  });
+    const total = await store.getUserDayTotal(message.author.id, dateKey);
+    const goal = await store.getUserGoal(message.author.id, dateKey, config.defaultWeeklyGoalMinutes);
+    await message.react("✅").catch(() => {});
+    await message.reply({
+      embeds: [
+        buildRecordEmbed({
+          username: entry.googleEmail || entry.username,
+          minutes,
+          total,
+          goal,
+          dateKey
+        })
+      ],
+      allowedMentions: { repliedUser: false }
+    });
+  } catch (error) {
+    if (error instanceof AccountNotLinkedError) {
+      await message.reply({
+        embeds: [buildAccountRequiredEmbed()],
+        allowedMentions: { repliedUser: false }
+      });
+      return;
+    }
+    throw error;
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -89,10 +108,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.commandName === "record") {
       await handleRecordCommand(interaction);
+    } else if (interaction.commandName === "account") {
+      await handleAccountCommand(interaction);
     } else if (interaction.commandName === "progress") {
       await handleProgressCommand(interaction);
     } else if (interaction.commandName === "goal") {
       await handleGoalCommand(interaction);
+    } else if (interaction.commandName === "quality") {
+      await handleQualityCommand(interaction);
     } else if (interaction.commandName === "summary") {
       await handleSummaryCommand(interaction);
     } else if (interaction.commandName === "ranking") {
@@ -100,7 +123,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   } catch (error) {
     console.error(error);
-    const response = { content: "処理中にエラーが発生しました。", ephemeral: true };
+    const response =
+      error instanceof AccountNotLinkedError
+        ? { embeds: [buildAccountRequiredEmbed()], ephemeral: true }
+        : { content: "処理中にエラーが発生しました。", ephemeral: true };
     if (interaction.deferred || interaction.replied) {
       await interaction.followUp(response);
     } else {
@@ -112,7 +138,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 async function handleRecordCommand(interaction) {
   const minutes = interaction.options.getInteger("minutes", true);
   const dateKey = getDateKey(new Date(), config.timeZone);
-  await store.addEntry({
+  const entry = await store.addEntry({
     userId: interaction.user.id,
     username: interaction.user.username,
     minutes,
@@ -123,11 +149,11 @@ async function handleRecordCommand(interaction) {
   });
 
   const total = await store.getUserDayTotal(interaction.user.id, dateKey);
-  const goal = await store.getUserGoal(interaction.user.id, config.defaultGoalMinutes);
+  const goal = await store.getUserGoal(interaction.user.id, dateKey, config.defaultWeeklyGoalMinutes);
   await interaction.reply({
     embeds: [
       buildRecordEmbed({
-        username: interaction.user.username,
+        username: entry.googleEmail || entry.username,
         minutes,
         total,
         goal,
@@ -137,11 +163,30 @@ async function handleRecordCommand(interaction) {
   });
 }
 
+async function handleAccountCommand(interaction) {
+  const identifier = normalizeEmail(interaction.options.getString("identifier", true));
+  const email = identifier;
+  if (!isValidEmail(email)) {
+    await interaction.reply({
+      content: "Googleアカウントはメールアドレスで指定してください。",
+      ephemeral: true
+    });
+    return;
+  }
+
+  await store.linkDiscordAccount(interaction.user.id, interaction.user.username, email);
+  await interaction.reply({
+    embeds: [buildAccountLinkedEmbed(email)],
+    ephemeral: true
+  });
+}
+
 async function handleProgressCommand(interaction) {
   const dateKey = getDateKey(new Date(), config.timeZone);
   const total = await store.getUserDayTotal(interaction.user.id, dateKey);
-  const goal = await store.getUserGoal(interaction.user.id, config.defaultGoalMinutes);
+  const goal = await store.getUserGoal(interaction.user.id, dateKey, config.defaultWeeklyGoalMinutes);
   const trend = await store.getUserTrend(interaction.user.id, dateKey, 7);
+  const outcomeTrend = await store.getOutcomeTrend(dateKey, 7, interaction.user.id);
   await interaction.reply({
     embeds: [
       buildProgressEmbed({
@@ -149,6 +194,7 @@ async function handleProgressCommand(interaction) {
         total,
         goal,
         trend,
+        outcomeTrend,
         dateKey
       })
     ],
@@ -157,10 +203,30 @@ async function handleProgressCommand(interaction) {
 }
 
 async function handleGoalCommand(interaction) {
+  const weekday = interaction.options.getInteger("weekday", true);
   const minutes = interaction.options.getInteger("minutes", true);
-  await store.setGoal(interaction.user.id, interaction.user.username, minutes);
+  await store.setWeeklyGoal(interaction.user.id, interaction.user.username, weekday, minutes);
   await interaction.reply({
-    embeds: [buildGoalEmbed(interaction.user.username, minutes)],
+    embeds: [buildGoalEmbed(interaction.user.username, weekday, minutes)],
+    ephemeral: true
+  });
+}
+
+async function handleQualityCommand(interaction) {
+  const score = interaction.options.getInteger("score", true);
+  const note = interaction.options.getString("note") || null;
+  const dateKey = getDateKey(new Date(), config.timeZone);
+  await store.addQualityRating({
+    userId: interaction.user.id,
+    username: interaction.user.username,
+    score,
+    note,
+    dateKey,
+    source: "slash-command"
+  });
+  const outcomeTrend = await store.getOutcomeTrend(dateKey, 1, interaction.user.id);
+  await interaction.reply({
+    embeds: [buildQualityEmbed(score, note, outcomeTrend[0])],
     ephemeral: true
   });
 }
@@ -169,6 +235,7 @@ async function handleSummaryCommand(interaction) {
   const days = interaction.options.getInteger("days") || 7;
   const dateKey = getDateKey(new Date(), config.timeZone);
   const trend = await store.getUserTrend(interaction.user.id, dateKey, days);
+  const outcomeTrend = await store.getOutcomeTrend(dateKey, days, interaction.user.id);
   const total = trend.reduce((sum, day) => sum + day.minutes, 0);
   await interaction.reply({
     embeds: [
@@ -176,6 +243,7 @@ async function handleSummaryCommand(interaction) {
         username: interaction.user.username,
         total,
         trend,
+        outcomeTrend,
         days,
         dateKey
       })
@@ -221,7 +289,7 @@ async function sendMorningReport() {
   const channel = await getReportChannel();
   const dateKey = getDateKey(new Date(), config.timeZone);
   await channel.send({
-    embeds: [buildMorningReportEmbed(dateKey, config.defaultGoalMinutes)]
+    embeds: [buildMorningReportEmbed(dateKey, getGoalForDate(dateKey, config.defaultWeeklyGoalMinutes))]
   });
 }
 
@@ -240,10 +308,11 @@ async function sendEveningReport() {
   const dateKey = getDateKey(new Date(), config.timeZone);
   const total = await store.getDayTotal(dateKey);
   const trend = await store.getTrend(dateKey, 14);
+  const outcomeTrend = await store.getOutcomeTrend(dateKey, 14);
   const ranking = (await store.getRanking(dateKey, 1)).slice(0, 10);
 
   await channel.send({
-    embeds: [buildEveningReportEmbed({ dateKey, total, trend, ranking })]
+    embeds: [buildEveningReportEmbed({ dateKey, total, trend, outcomeTrend, ranking })]
   });
 }
 
@@ -264,6 +333,15 @@ async function getReportChannel() {
 async function registerCommands() {
   const commands = [
     new SlashCommandBuilder()
+      .setName("account")
+      .setDescription("DiscordアカウントをGoogleメールアドレスに紐づけます")
+      .addStringOption((option) =>
+        option
+          .setName("identifier")
+          .setDescription("Googleアカウントのメールアドレス")
+          .setRequired(true)
+      ),
+    new SlashCommandBuilder()
       .setName("record")
       .setDescription("勉強時間を記録します")
       .addIntegerOption((option) =>
@@ -277,7 +355,22 @@ async function registerCommands() {
     new SlashCommandBuilder().setName("progress").setDescription("今日の目標と進捗を表示します"),
     new SlashCommandBuilder()
       .setName("goal")
-      .setDescription("毎日の目標勉強分数を設定します")
+      .setDescription("曜日ごとの目標勉強分数を設定します")
+      .addIntegerOption((option) =>
+        option
+          .setName("weekday")
+          .setDescription("目標を設定する曜日")
+          .setRequired(true)
+          .addChoices(
+            { name: "日曜日", value: 0 },
+            { name: "月曜日", value: 1 },
+            { name: "火曜日", value: 2 },
+            { name: "水曜日", value: 3 },
+            { name: "木曜日", value: 4 },
+            { name: "金曜日", value: 5 },
+            { name: "土曜日", value: 6 }
+          )
+      )
       .addIntegerOption((option) =>
         option
           .setName("minutes")
@@ -285,6 +378,24 @@ async function registerCommands() {
           .setRequired(true)
           .setMinValue(1)
           .setMaxValue(1440)
+      ),
+    new SlashCommandBuilder()
+      .setName("quality")
+      .setDescription("今日の勉強の質を1〜5で評価します")
+      .addIntegerOption((option) =>
+        option
+          .setName("score")
+          .setDescription("勉強の質。1が低く、5が高い評価です")
+          .setRequired(true)
+          .setMinValue(1)
+          .setMaxValue(5)
+      )
+      .addStringOption((option) =>
+        option
+          .setName("note")
+          .setDescription("任意メモ")
+          .setRequired(false)
+          .setMaxLength(200)
       ),
     new SlashCommandBuilder()
       .setName("summary")
@@ -349,8 +460,9 @@ function buildRecordEmbed({ username, minutes, total, goal, dateKey }) {
     );
 }
 
-function buildProgressEmbed({ username, total, goal, trend, dateKey }) {
+function buildProgressEmbed({ username, total, goal, trend, outcomeTrend, dateKey }) {
   const remaining = Math.max(goal - total, 0);
+  const todayOutcome = outcomeTrend.at(-1);
   return baseEmbed(EMBED_COLORS.progress)
     .setTitle("今日の進捗")
     .setDescription(`${username}さんの現在の状況です。`)
@@ -360,19 +472,39 @@ function buildProgressEmbed({ username, total, goal, trend, dateKey }) {
       { name: "残り", value: remaining === 0 ? "達成済み" : formatMinutes(remaining), inline: true },
       { name: "達成率", value: `${progressBar(total, goal)} ${formatPercent(total, goal)}` },
       { name: "直近7日の推移", value: codeBlock(formatTrend(trend)) },
+      {
+        name: "今日の成果指数",
+        value: `${todayOutcome?.outcomeIndex || 0} / 質平均 ${formatQuality(todayOutcome?.qualityAverage)}`,
+        inline: true
+      },
       { name: "日付", value: dateKey, inline: true }
     );
 }
 
-function buildGoalEmbed(username, minutes) {
+function buildGoalEmbed(username, weekday, minutes) {
   return baseEmbed(EMBED_COLORS.goal)
     .setTitle("目標を更新しました")
-    .setDescription(`${username}さんの毎日の目標を ${formatMinutes(minutes)} に設定しました。`)
-    .addFields({ name: "新しい目標", value: formatMinutes(minutes), inline: true });
+    .setDescription(`${username}さんの${formatWeekday(weekday)}の目標を ${formatMinutes(minutes)} に設定しました。`)
+    .addFields(
+      { name: "曜日", value: formatWeekday(weekday), inline: true },
+      { name: "新しい目標", value: formatMinutes(minutes), inline: true }
+    );
 }
 
-function buildSummaryEmbed({ username, total, trend, days, dateKey }) {
+function buildQualityEmbed(score, note, outcome) {
+  return baseEmbed(EMBED_COLORS.quality)
+    .setTitle("勉強の質を記録しました")
+    .setDescription(note ? `メモ: ${note}` : "今日の評価を保存しました。")
+    .addFields(
+      { name: "評価", value: `${score} / 5`, inline: true },
+      { name: "今日の成果指数", value: String(outcome?.outcomeIndex || 0), inline: true },
+      { name: "今日の質平均", value: formatQuality(outcome?.qualityAverage), inline: true }
+    );
+}
+
+function buildSummaryEmbed({ username, total, trend, outcomeTrend, days, dateKey }) {
   const average = Math.round(total / days);
+  const outcomeTotal = outcomeTrend.reduce((sum, day) => sum + day.outcomeIndex, 0);
   return baseEmbed(EMBED_COLORS.progress)
     .setTitle(`直近${days}日のサマリー`)
     .setDescription(`${username}さんの勉強時間の推移です。`)
@@ -380,7 +512,9 @@ function buildSummaryEmbed({ username, total, trend, days, dateKey }) {
       { name: "合計", value: formatMinutes(total), inline: true },
       { name: "1日平均", value: formatMinutes(average), inline: true },
       { name: "集計終了日", value: dateKey, inline: true },
-      { name: "推移", value: codeBlock(formatTrend(trend)) }
+      { name: "成果指数合計", value: String(outcomeTotal), inline: true },
+      { name: "勉強時間の推移", value: codeBlock(formatTrend(trend)) },
+      { name: "成果指数の推移", value: codeBlock(formatOutcomeTrend(outcomeTrend)) }
     );
 }
 
@@ -398,8 +532,8 @@ function buildMorningReportEmbed(dateKey, defaultGoalMinutes) {
     .setDescription("今日の勉強を始める準備ができました。")
     .addFields(
       { name: "日付", value: dateKey, inline: true },
-      { name: "標準目標", value: formatMinutes(defaultGoalMinutes), inline: true },
-      { name: "使えるコマンド", value: "`/goal` で個人目標を変更、`/progress` で進捗確認" }
+      { name: "今日の標準目標", value: formatMinutes(defaultGoalMinutes), inline: true },
+      { name: "使えるコマンド", value: "`/account` でGoogleメール紐づけ、`/goal` で曜日目標、`/quality` で質評価" }
     );
 }
 
@@ -414,16 +548,32 @@ function buildNoonReportEmbed({ dateKey, total, ranking }) {
     );
 }
 
-function buildEveningReportEmbed({ dateKey, total, trend, ranking }) {
+function buildEveningReportEmbed({ dateKey, total, trend, outcomeTrend, ranking }) {
+  const outcomeTotal = outcomeTrend.reduce((sum, day) => sum + day.outcomeIndex, 0);
   return baseEmbed(EMBED_COLORS.evening)
     .setTitle("夜の勉強レポート")
     .setDescription("今日の勉強時間と最近の推移です。")
     .addFields(
       { name: "日付", value: dateKey, inline: true },
       { name: "今日の全体合計", value: formatMinutes(total), inline: true },
+      { name: "直近14日の成果指数合計", value: String(outcomeTotal), inline: true },
       { name: "今日のランキング", value: formatRanking(ranking, 1) },
-      { name: "直近14日の推移", value: codeBlock(formatTrend(trend)) }
+      { name: "直近14日の勉強時間", value: codeBlock(formatTrend(trend)) },
+      { name: "直近14日の成果指数", value: codeBlock(formatOutcomeTrend(outcomeTrend)) }
     );
+}
+
+function buildAccountRequiredEmbed() {
+  return baseEmbed(EMBED_COLORS.account)
+    .setTitle("Googleアカウントの紐づけが必要です")
+    .setDescription("Discordから記録する前に `/account identifier:<Googleメールアドレス>` を実行してください。")
+    .addFields({ name: "例", value: "`/account identifier:you@example.com`" });
+}
+
+function buildAccountLinkedEmbed(email) {
+  return baseEmbed(EMBED_COLORS.account)
+    .setTitle("アカウントを紐づけました")
+    .setDescription(`今後のDiscord記録は ${email} のGoogleアカウントの記録として保存します。`);
 }
 
 function baseEmbed(color) {
@@ -460,6 +610,21 @@ function formatTrend(trend) {
     .join("\n");
 }
 
+function formatOutcomeTrend(trend) {
+  if (trend.length === 0) {
+    return "記録はまだありません。";
+  }
+
+  const max = Math.max(...trend.map((day) => day.outcomeIndex), 1);
+  return trend
+    .map((day) => {
+      const width = Math.round((day.outcomeIndex / max) * 12);
+      const bar = "#".repeat(width).padEnd(12, "-");
+      return `${day.date} | ${bar} | ${day.outcomeIndex}`;
+    })
+    .join("\n");
+}
+
 function formatRanking(ranking, days) {
   if (ranking.length === 0) {
     return `直近${days}日の記録はまだありません。`;
@@ -473,6 +638,18 @@ function codeBlock(value) {
   const body =
     value.length > maxCodeLength ? `${value.slice(0, maxCodeLength - 3).trimEnd()}...` : value;
   return `\`\`\`\n${body}\n\`\`\``;
+}
+
+function formatQuality(value) {
+  return value ? `${value.toFixed(1)} / 5` : "未評価";
+}
+
+function formatWeekday(weekday) {
+  return ["日曜日", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日"][weekday] || "不明";
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function readConfig() {
